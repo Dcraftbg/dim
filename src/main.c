@@ -5,21 +5,15 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#ifdef _MINOS
-#define WIDTH 80
-#define HEIGHT 24
-#else
-#define WIDTH 80
-#define HEIGHT 24
-#endif
-static char _screen[WIDTH*HEIGHT] = {0};
+static char* _screen = NULL;
+static size_t _width, _height;
 size_t cx, cy;
 void get_winsize(size_t* w, size_t* h) {
-    *w = WIDTH;
-    *h = HEIGHT;
+    *w = _width;
+    *h = _height;
 }
 void clear() {
-    memset(_screen, 0, sizeof(_screen));
+    memset(_screen, 0, _width*_height);
     printf("\033[2J");
     printf("\033[H");
     fflush(stdout);
@@ -35,8 +29,8 @@ void gotopos(size_t x, size_t y) {
     }
 }
 void putcharat(char c, size_t x, size_t y) {
-    assert(x < WIDTH && y < HEIGHT);
-    size_t i = x+y*WIDTH;
+    assert(x < _width && y < _height);
+    size_t i = x+y*_width;
     if(_screen[i] == c) {
         return;
     }
@@ -50,8 +44,10 @@ size_t putstrnat(const char* str, size_t n, size_t x, size_t y) {
     if(!str) return 0;
     for(size_t i = 0; i < n; ++i) {
         putcharat(str[i], x, y);
-        x = (x+1) % WIDTH;
-        if(x == 0) y = (y+1) % HEIGHT;
+        assert(_width);
+        assert(_height);
+        x = (x+1) % _width;
+        if(x == 0) y = (y+1) % _height;
     }
     return n;
 }
@@ -72,7 +68,32 @@ void clearlineat(size_t y) {
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/ioctl.h>
 #endif
+void native_get_size(size_t* w, size_t* h) {
+#ifdef _MINOS
+#   error TBD
+#else
+    struct winsize winsz;
+    ioctl(0, TIOCGWINSZ, &winsz);
+    *w = winsz.ws_col;
+    *h = winsz.ws_row;
+#endif
+}
+void update_size(size_t w, size_t h) {
+    char* new_screen = malloc(w*h);
+    assert(new_screen);
+    memset(new_screen, 0, w*h);
+    for(size_t y = 0; y < h && y < _height; ++y) {
+        for(size_t x = 0; x < w && x < _width; ++x) {
+            new_screen[y*w + x] = _screen[y*_width + x];
+        }
+    }
+    free(_screen);
+    _screen = new_screen;
+    _width = w;
+    _height = h;
+}
 void disable_echo() {
 #ifdef _MINOS
     ttyflags_t flags;
@@ -318,6 +339,11 @@ int main(int argc, const char** argv) {
     const char* exe = shift_args(&argc, &argv);
     assert(exe);
     (void)exe;
+    
+    size_t w, h;
+    native_get_size(&w, &h);
+    update_size(w, h);
+
     editor.path = NULL;
     
     const char* arg;
@@ -347,7 +373,6 @@ int main(int argc, const char** argv) {
     register_cleaners();
     clear();
     disable_echo();
-    size_t w, h;
     get_winsize(&w, &h);
     for(;;) {
         size_t visible_lines = editor.lines.len < (h-2) ? editor.lines.len : (h-2);
