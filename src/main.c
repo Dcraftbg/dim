@@ -65,7 +65,8 @@ void clearlineat(size_t y) {
 #endif
 void native_get_size(size_t* w, size_t* h) {
 #ifdef _MINOS
-#   error TBD
+    *w = 80;
+    *h = 24;
 #else
     struct winsize winsz;
     ioctl(0, TIOCGWINSZ, &winsz);
@@ -94,7 +95,7 @@ void native_get_flags(native_flags_t* flags) {
 void native_set_flags(native_flags_t flags) {
 #ifdef _MINOS
     ttyflags_t tty_flags;
-    tty_get_flags(&tty_flags);
+    tty_get_flags(STDIN_FILENO, &tty_flags);
     tty_flags &= ~(TTY_ECHO | TTY_INSTANT);
     if(flags & NATIVE_FLAG_ECHO) tty_flags |= TTY_ECHO;
     if(flags & NATIVE_FLAG_INSTANT) tty_flags |= TTY_INSTANT;
