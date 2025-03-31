@@ -486,8 +486,11 @@ int main(int argc, const char** argv) {
                     clearlineat(h-1);
                     break;
                 }
+
+                editor.cmd[editor.cmdlen] = '\0';
+                assert(editor.cmdlen++ < sizeof(editor.cmd));
                 // NOTE: I don't need to check boundaries. \0 would make it fail anyway
-                if(memcmp(editor.cmd, "q", editor.cmdlen) == 0) {
+                if(strcmp(editor.cmd, "q") == 0) {
                     clear();
                     #ifdef _MINOS
                     // NOTE: Temporary solution for now.
@@ -495,7 +498,7 @@ int main(int argc, const char** argv) {
                     tty_set_flags(STDIN_FILENO, oldflags);
                     #endif
                     return 0;
-                } else if (memcmp(editor.cmd, "w", editor.cmdlen) == 0) {
+                } else if (strcmp(editor.cmd, "w") == 0) {
                     ssize_t res = write_to_file(editor.path, editor.src.data, editor.src.len);
                     if(res < 0) {
                         char buf[128];
@@ -513,8 +516,8 @@ int main(int argc, const char** argv) {
                         break;
                     }
                 } else {
-                    char buf[128];
-                    snprintf(buf, sizeof(buf), "Unknown command `%.*s`", (int)editor.cmdlen, editor.cmd);
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "Unknown command `%s`", editor.cmd);
                     putstrat(buf, 0, h-1);
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
