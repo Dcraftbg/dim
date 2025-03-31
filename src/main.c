@@ -271,7 +271,6 @@ void parse_lines(Editor* editor) {
         }
     }
 }
-Editor editor={0};
 ssize_t write_to_file(const char* path, char* bytes, size_t len) {
     FILE* f = fopen(path, "wb");
     if(!f) return -errno;
@@ -315,6 +314,7 @@ const char* shift_args(int *argc, const char ***argv) {
     return ((*argc)--, *((*argv)++));
 }
 int main(int argc, const char** argv) {
+    static Editor editor={0};
     const char* exe = shift_args(&argc, &argv);
     assert(exe);
     (void)exe;
