@@ -73,6 +73,41 @@ void native_get_size(size_t* w, size_t* h) {
     *h = winsz.ws_row;
 #endif
 }
+enum {
+    NATIVE_FLAG_ECHO    = (1 << 0),
+    NATIVE_FLAG_INSTANT = (1 << 1),
+};
+typedef int native_flags_t;
+void native_get_flags(native_flags_t* flags) {
+#ifdef _MINOS
+    ttyflags_t tty_flags;
+    tty_get_flags(STDIN_FILENO, &tty_flags);
+    if(tty_flags & TTY_ECHO)    *flags |= NATIVE_FLAG_ECHO;
+    if(tty_flags & TTY_INSTANT) *flags |= NATIVE_FLAG_INSTANT;
+#else
+    struct termios term;
+    tcgetattr(fileno(stdin), &term);
+    if(term.c_lflag & ECHO)      *flags |= NATIVE_FLAG_ECHO;
+    if(!(term.c_lflag & ICANON)) *flags |= NATIVE_FLAG_INSTANT;
+#endif
+}
+void native_set_flags(native_flags_t flags) {
+#ifdef _MINOS
+    ttyflags_t tty_flags;
+    tty_get_flags(&tty_flags);
+    tty_flags &= ~(TTY_ECHO | TTY_INSTANT);
+    if(flags & NATIVE_FLAG_ECHO) tty_flags |= TTY_ECHO;
+    if(flags & NATIVE_FLAG_INSTANT) tty_flags |= TTY_INSTANT;
+    tty_set_flags(STDIN_FILENO, tty_flags);
+#else
+    struct termios term;
+    tcgetattr(fileno(stdin), &term);
+    term.c_lflag &= ~(ECHO | ICANON);
+    if(flags & NATIVE_FLAG_ECHO) term.c_lflag |= ECHO;
+    if(!(flags & NATIVE_FLAG_INSTANT)) term.c_lflag |= ICANON;
+    tcsetattr(fileno(stdin), TCSANOW, &term);
+#endif
+}
 void update_size(size_t w, size_t h) {
     char* new_screen = malloc(w*h);
     assert(new_screen);
@@ -87,35 +122,6 @@ void update_size(size_t w, size_t h) {
     _width = w;
     _height = h;
 }
-void disable_echo() {
-#ifdef _MINOS
-    ttyflags_t flags;
-    tty_get_flags(STDIN_FILENO, &flags);
-    flags &= ~(TTY_ECHO);
-    flags |= TTY_INSTANT;
-    tty_set_flags(STDIN_FILENO, flags);
-#else
-    struct termios term;
-    tcgetattr(fileno(stdin), &term);
-    term.c_lflag &= ~(ECHO | ICANON);
-    tcsetattr(fileno(stdin), TCSANOW, &term);
-#endif
-}
-void enable_echo() {
-#ifdef _MINOS
-    ttyflags_t flags;
-    tty_get_flags(STDIN_FILENO, &flags);
-    flags |= TTY_ECHO;
-    flags &= ~TTY_INSTANT;
-    tty_set_flags(STDIN_FILENO, flags);
-#else
-    struct termios term;
-    tcgetattr(fileno(stdin), &term);
-    term.c_lflag |= ECHO | ICANON;
-    tcsetattr(fileno(stdin), 0, &term);
-#endif
-}
-
 enum {
     MODE_NORMAL,
     MODE_INSERT,
@@ -393,7 +399,11 @@ int main(int argc, const char** argv) {
     }
     register_signals();
     clear();
-    disable_echo();
+    native_flags_t native_flags;
+    native_get_flags(&native_flags);
+    native_flags &= ~NATIVE_FLAG_ECHO;
+    native_flags |= NATIVE_FLAG_INSTANT;
+    native_set_flags(native_flags);
     for(;;) {
         redraw();
         switch(editor.mode) {
