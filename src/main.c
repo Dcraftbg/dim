@@ -8,10 +8,6 @@
 static char* _screen = NULL;
 static size_t _width, _height;
 size_t cx, cy;
-void get_winsize(size_t* w, size_t* h) {
-    *w = _width;
-    *h = _height;
-}
 void clear() {
     memset(_screen, 0, _width*_height);
     printf("\033[2J");
@@ -55,10 +51,7 @@ static size_t putstrat(const char* str, size_t x, size_t y) {
     return putstrnat(str, strlen(str), x, y);
 }
 void clearlineat(size_t y) {
-    size_t w, h;
-    get_winsize(&w, &h);
-    (void)h;
-    for(size_t i = 0; i < w; ++i) {
+    for(size_t i = 0; i < _width; ++i) {
         putcharat(' ', i, y);
     }
 }
@@ -171,29 +164,6 @@ int getch() {
     }
     return c;
 }
-#ifdef _MINOS
-ttyflags_t oldflags;
-#else
-struct termios oldtermios;
-void _cleanup_termios() {
-    tcsetattr(fileno(stdin), TCSANOW, &oldtermios);
-}
-void _interrupt_handler_cleaner(int sig) {
-    (void)sig;
-    _cleanup_termios();
-    exit(1);
-}
-#endif
-void register_cleaners() {
-#ifdef _MINOS
-    tty_get_flags(STDIN_FILENO, &oldflags);
-    // TODO: Some sort of cleaners for resetting the tty mode back
-#else
-    tcgetattr(fileno(stdin), &oldtermios);
-    signal(SIGINT, _interrupt_handler_cleaner);
-    atexit(_cleanup_termios);
-#endif
-}
 typedef struct {
     size_t offset;
     size_t size;
@@ -228,7 +198,7 @@ typedef struct {
     size_t cursor_chr;
     size_t view_line_start;
 } Editor;
-
+Editor editor={0};
 void editor_reserve_chars(Editor* editor, size_t extra) {
     da_reserve(&editor->src, extra);
 }
@@ -334,15 +304,66 @@ const char* shift_args(int *argc, const char ***argv) {
     if((*argc) <= 0) return NULL;
     return ((*argc)--, *((*argv)++));
 }
-int main(int argc, const char** argv) {
-    static Editor editor={0};
-    const char* exe = shift_args(&argc, &argv);
-    assert(exe);
-    (void)exe;
-    
+void redraw(void) {
+    size_t visible_lines = editor.lines.len < (_height-2) ? editor.lines.len : (_height-2);
+    for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
+        Line* line = &editor.lines.data[line_i];
+        size_t visible = line->size < _width ? line->size : _width; 
+        putstrnat(editor.src.data + line->offset, visible, 0, line_i);
+        for(size_t x = visible; x < _width; ++x) {
+            putcharat(' ', x, line_i);
+        }
+    }
+    size_t head = 0;
+    head += putstrat(mode_to_str(editor.mode), head, _height-2);
+    putcharat(' ', head++, _height-2);
+    head += putstrat(editor.path, head, _height-2);
+    for(size_t i = head; i < _width; ++i) {
+        putcharat('-', i, _height-2);
+    }
+    gotopos(0, _height-1);
+}
+#ifdef _MINOS
+ttyflags_t oldflags;
+#else
+struct termios oldtermios;
+void _cleanup_termios() {
+    tcsetattr(fileno(stdin), TCSANOW, &oldtermios);
+}
+void _interrupt_handler_cleaner(int sig) {
+    (void)sig;
+    _cleanup_termios();
+    exit(1);
+}
+void _interrupt_handler_resize(int sig) {
+    (void)sig;
     size_t w, h;
     native_get_size(&w, &h);
     update_size(w, h);
+    clear();
+    redraw();
+}
+#endif
+void register_signals() {
+#ifdef _MINOS
+    tty_get_flags(STDIN_FILENO, &oldflags);
+    // TODO: Some sort of cleaners for resetting the tty mode back
+#else
+    tcgetattr(fileno(stdin), &oldtermios);
+    signal(SIGINT, _interrupt_handler_cleaner);
+    signal(SIGWINCH, _interrupt_handler_resize);
+    atexit(_cleanup_termios);
+#endif
+}
+int main(int argc, const char** argv) {
+    const char* exe = shift_args(&argc, &argv);
+    assert(exe);
+    (void)exe;
+    {
+        size_t w, h;
+        native_get_size(&w, &h);
+        update_size(w, h);
+    }
 
     editor.path = NULL;
     
@@ -370,28 +391,11 @@ int main(int argc, const char** argv) {
     } else {
         parse_lines(&editor);
     }
-    register_cleaners();
+    register_signals();
     clear();
     disable_echo();
-    get_winsize(&w, &h);
     for(;;) {
-        size_t visible_lines = editor.lines.len < (h-2) ? editor.lines.len : (h-2);
-        for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
-            Line* line = &editor.lines.data[line_i];
-            size_t visible = line->size < w ? line->size : w; 
-            putstrnat(editor.src.data + line->offset, visible, 0, line_i);
-            for(size_t x = visible; x < w; ++x) {
-                putcharat(' ', x, line_i);
-            }
-        }
-        size_t head = 0;
-        head += putstrat(mode_to_str(editor.mode), head, h-2);
-        putcharat(' ', head++, h-2);
-        head += putstrat(editor.path, head, h-2);
-        for(size_t i = head; i < w; ++i) {
-            putcharat('-', i, h-2);
-        }
-        gotopos(0, h-1);
+        redraw();
         switch(editor.mode) {
         case MODE_NORMAL: {
             int c = getch();
@@ -401,8 +405,8 @@ int main(int argc, const char** argv) {
                 break;
             case ':':
                 editor.mode = MODE_CMD;
-                gotopos(0, h-1);
-                clearlineat(h-1);
+                gotopos(0, _height-1);
+                clearlineat(_height-1);
                 break;
             default:
                 // putcharat(c, putstrat("Unexpected chr ", 0, h-1), h-1);
@@ -490,25 +494,25 @@ int main(int argc, const char** argv) {
             }
         } break;
         case MODE_CMD: {
-            putcharat(':', 0, h-1);
-            putstrnat(editor.cmd, editor.cmdlen, 1, h-1);
-            gotopos(editor.cmdlen+1, h-1);
+            putcharat(':', 0, _height-1);
+            putstrnat(editor.cmd, editor.cmdlen, 1, _height-1);
+            gotopos(editor.cmdlen+1, _height-1);
             int c = getch();
             // TODO: We are temporarily using '`' as the quit key.
             // We don't do escape parsing very well
             if(c == '`') {
                 editor.mode = MODE_NORMAL;
                 editor.cmdlen = 0;
-                clearlineat(h-1);
+                clearlineat(_height-1);
                 break;
             } else if(c == BACKSPACE) {
                 if(editor.cmdlen) editor.cmdlen--;
-                putcharat(' ', editor.cmdlen+1, h-1);
+                putcharat(' ', editor.cmdlen+1, _height-1);
             } else if(c == '\n') {
                 if(editor.cmdlen == 0) {
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
-                    clearlineat(h-1);
+                    clearlineat(_height-1);
                     break;
                 }
 
@@ -528,14 +532,14 @@ int main(int argc, const char** argv) {
                     if(res < 0) {
                         char buf[128];
                         snprintf(buf, sizeof(buf), "Failed to write to `%s`: %s", editor.path, strerror(-res));
-                        putstrat(buf, 0, h-1);
+                        putstrat(buf, 0, _height-1);
                         editor.cmdlen = 0;
                         editor.mode = MODE_NORMAL;
                         break;
                     } else {
                         char buf[128];
                         snprintf(buf, sizeof(buf), "Wrote %zu bytes", editor.src.len);
-                        putstrat(buf, 0, h-1);
+                        putstrat(buf, 0, _height-1);
                         editor.cmdlen = 0;
                         editor.mode = MODE_NORMAL;
                         break;
@@ -543,7 +547,7 @@ int main(int argc, const char** argv) {
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "Unknown command `%s`", editor.cmd);
-                    putstrat(buf, 0, h-1);
+                    putstrat(buf, 0, _height-1);
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
                     break;
