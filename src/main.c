@@ -5,124 +5,11 @@
 #include <stdlib.h>
 #include <errno.h>
 
-static char* _screen = NULL;
-static size_t _width, _height;
-size_t cx, cy;
-void clear() {
-    memset(_screen, 0, _width*_height);
-    printf("\033[2J");
-    printf("\033[H");
-    fflush(stdout);
-    cx = 0;
-    cy = 0;
-}
-void gotopos(size_t x, size_t y) {
-    if(cx != x || cy != y) {
-        cx = x;
-        cy = y;
-        printf("\033[%zu;%zuH", y+1, x+1);
-        fflush(stdout);
-    }
-}
-void putcharat(char c, size_t x, size_t y) {
-    assert(x < _width && y < _height);
-    size_t i = x+y*_width;
-    if(_screen[i] == c) {
-        return;
-    }
-    _screen[i] = c;
-    gotopos(x, y);
-    fputc(c, stdout);
-    fflush(stdout);
-    cx++;
-}
-size_t putstrnat(const char* str, size_t n, size_t x, size_t y) {
-    if(!str) return 0;
-    for(size_t i = 0; i < n; ++i) {
-        putcharat(str[i], x, y);
-        assert(_width);
-        assert(_height);
-        x = (x+1) % _width;
-        if(x == 0) y = (y+1) % _height;
-    }
-    return n;
-}
-static size_t putstrat(const char* str, size_t x, size_t y) {
-    return putstrnat(str, strlen(str), x, y);
-}
-void clearlineat(size_t y) {
-    for(size_t i = 0; i < _width; ++i) {
-        putcharat(' ', i, y);
-    }
-}
-#ifdef _MINOS
-#include <minos/tty/tty.h>
-#else
-#include <termios.h>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/ioctl.h>
-#endif
-void native_get_size(size_t* w, size_t* h) {
-#ifdef _MINOS
-    *w = 80;
-    *h = 24;
-#else
-    struct winsize winsz;
-    ioctl(0, TIOCGWINSZ, &winsz);
-    *w = winsz.ws_col;
-    *h = winsz.ws_row;
-#endif
-}
-enum {
-    NATIVE_FLAG_ECHO    = (1 << 0),
-    NATIVE_FLAG_INSTANT = (1 << 1),
-};
-typedef int native_flags_t;
-void native_get_flags(native_flags_t* flags) {
-#ifdef _MINOS
-    ttyflags_t tty_flags;
-    tty_get_flags(STDIN_FILENO, &tty_flags);
-    if(tty_flags & TTY_ECHO)    *flags |= NATIVE_FLAG_ECHO;
-    if(tty_flags & TTY_INSTANT) *flags |= NATIVE_FLAG_INSTANT;
-#else
-    struct termios term;
-    tcgetattr(fileno(stdin), &term);
-    if(term.c_lflag & ECHO)      *flags |= NATIVE_FLAG_ECHO;
-    if(!(term.c_lflag & ICANON)) *flags |= NATIVE_FLAG_INSTANT;
-#endif
-}
-void native_set_flags(native_flags_t flags) {
-#ifdef _MINOS
-    ttyflags_t tty_flags;
-    tty_get_flags(STDIN_FILENO, &tty_flags);
-    tty_flags &= ~(TTY_ECHO | TTY_INSTANT);
-    if(flags & NATIVE_FLAG_ECHO) tty_flags |= TTY_ECHO;
-    if(flags & NATIVE_FLAG_INSTANT) tty_flags |= TTY_INSTANT;
-    tty_set_flags(STDIN_FILENO, tty_flags);
-#else
-    struct termios term;
-    tcgetattr(fileno(stdin), &term);
-    term.c_lflag &= ~(ECHO | ICANON);
-    if(flags & NATIVE_FLAG_ECHO) term.c_lflag |= ECHO;
-    if(!(flags & NATIVE_FLAG_INSTANT)) term.c_lflag |= ICANON;
-    tcsetattr(fileno(stdin), TCSANOW, &term);
-#endif
-}
-void update_size(size_t w, size_t h) {
-    char* new_screen = malloc(w*h);
-    assert(new_screen);
-    memset(new_screen, 0, w*h);
-    for(size_t y = 0; y < h && y < _height; ++y) {
-        for(size_t x = 0; x < w && x < _width; ++x) {
-            new_screen[y*w + x] = _screen[y*_width + x];
-        }
-    }
-    free(_screen);
-    _screen = new_screen;
-    _width = w;
-    _height = h;
-}
+#define STUI_NO_UNICODE
+#define STUI_NO_COLORS
+#define STUI_IMPLEMENTATION
+#include "stui.h"
+
 enum {
     MODE_NORMAL,
     MODE_INSERT,
@@ -144,33 +31,7 @@ enum {
 #else
     BACKSPACE=127,
 #endif
-    KEY_UP=256,
-    KEY_DOWN,
-    KEY_RIGHT,
-    KEY_LEFT,
 };
-int getch() {
-    int c = getchar();
-    if(c == 0x1B) {
-        c=getchar();
-        if(c != '[') {
-            fprintf(stderr, "Escape sequence wasn't csi");
-            return -1;
-        }
-        c=getchar();
-        switch(c) {
-        case 'A':
-        case 'B':
-        case 'C':
-        case 'D':
-            return c-'A'+KEY_UP;
-        default:
-            fprintf(stderr, "Unhandled escape sequence in getchar() (%c)\n", c);
-            return -1;
-        }
-    }
-    return c;
-}
 typedef struct {
     size_t offset;
     size_t size;
@@ -312,55 +173,112 @@ const char* shift_args(int *argc, const char ***argv) {
     return ((*argc)--, *((*argv)++));
 }
 void redraw(void) {
-    size_t visible_lines = editor.lines.len < (_height-2) ? editor.lines.len : (_height-2);
-    for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
-        Line* line = &editor.lines.data[line_i];
-        size_t visible = line->size < _width ? line->size : _width; 
-        putstrnat(editor.src.data + line->offset, visible, 0, line_i);
-        for(size_t x = visible; x < _width; ++x) {
-            putcharat(' ', x, line_i);
+    size_t width, height;
+    stui_getsize(&width, &height);
+    size_t visible_lines = editor.lines.len < (height-2) ? editor.lines.len : (height-2);
+    // Clear the entire window
+    for(size_t y = 0; y < height; ++y) {
+        for(size_t x = 0; x < width; ++x) {
+            stui_putchar(x, y, ' ');
         }
     }
-    size_t head = 0;
-    head += putstrat(mode_to_str(editor.mode), head, _height-2);
-    putcharat(' ', head++, _height-2);
-    head += putstrat(editor.path, head, _height-2);
-    for(size_t i = head; i < _width; ++i) {
-        putcharat('-', i, _height-2);
+    for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
+        Line* line = &editor.lines.data[line_i];
+        size_t visible = line->size < width ? line->size : width; 
+        for(size_t i = 0; i < visible; ++i) stui_putchar(i, line_i, editor.src.data[line->offset + i]);
     }
-    gotopos(0, _height-1);
+    size_t x = 0, y = height-2;
+    const char* mode = mode_to_str(editor.mode);
+    while(*mode) stui_putchar(x++, y, *mode++);
+    stui_putchar(x++, y, ' ');
+    const char* path = editor.path;
+    while(*path) stui_putchar(x++, y, *path++);
+    for(size_t i = x; i < width; ++i) {
+        stui_putchar(i, y, '-');
+    }
+    y++;
+    x = 0;
+    size_t cursor_x = 0, cursor_y = 0;
+    switch(editor.mode) {
+    case MODE_NORMAL:
+    case MODE_INSERT:
+        cursor_x = editor.cursor_chr;
+        cursor_y = editor.cursor_line;
+        break;
+    case MODE_CMD:
+        stui_putchar(0, y, ':');
+        for(size_t i = 0; i < editor.cmdlen; ++i) {
+            stui_putchar(1, height-1, editor.cmd[i]);
+        }
+        cursor_x = editor.cmdlen+1;
+        cursor_y = height-1;
+    }
+    stui_refresh();
+    stui_goto(cursor_x, cursor_y);
 }
-#ifdef _MINOS
-ttyflags_t oldflags;
-#else
+#ifndef _MINOS
 struct termios oldtermios;
-void _cleanup_termios() {
-    tcsetattr(fileno(stdin), TCSANOW, &oldtermios);
-}
 void _interrupt_handler_cleaner(int sig) {
     (void)sig;
-    _cleanup_termios();
+    stui_clear();
     exit(1);
 }
 void _interrupt_handler_resize(int sig) {
     (void)sig;
     size_t w, h;
-    native_get_size(&w, &h);
-    update_size(w, h);
-    clear();
+    stui_term_get_size(&w, &h);
+    stui_setsize(w, h);
+    stui_clear();
     redraw();
 }
 #endif
-void register_signals() {
-#ifdef _MINOS
-    tty_get_flags(STDIN_FILENO, &oldflags);
-    // TODO: Some sort of cleaners for resetting the tty mode back
-#else
-    tcgetattr(fileno(stdin), &oldtermios);
+stui_term_flag_t old_flags;
+void cleanup_flags(void) {
+    stui_term_set_flags(old_flags);
+}
+void register_signals(void) {
+#ifndef _MINOS
     signal(SIGINT, _interrupt_handler_cleaner);
     signal(SIGWINCH, _interrupt_handler_resize);
-    atexit(_cleanup_termios);
 #endif
+}
+void handle_editor_movement(uint32_t key) {
+    switch(key) {
+    case STUI_KEY_UP:
+        if(editor.cursor_line > 0) {
+            editor.cursor_line--;
+            if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
+                editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
+        }
+        break;
+    case STUI_KEY_DOWN:
+        if(editor.cursor_line+1 < editor.lines.len) {
+            editor.cursor_line++;
+            if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
+                editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
+        }
+        break;
+    case STUI_KEY_RIGHT:
+        if(editor.cursor_chr >= editor.lines.data[editor.cursor_line].size) {
+            if(editor.cursor_line+1 < editor.lines.len) {
+                editor.cursor_chr = 0;
+                editor.cursor_line++;
+            }
+        } else {
+            editor.cursor_chr++;
+        }
+        break;
+    case STUI_KEY_LEFT: 
+        if(editor.cursor_chr > 0) {
+            editor.cursor_chr--;
+        } else {
+            if(editor.cursor_line > 0) {
+                editor.cursor_line--;
+                editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
+            }
+        }
+        break;
+    }
 }
 int main(int argc, const char** argv) {
     const char* exe = shift_args(&argc, &argv);
@@ -368,9 +286,11 @@ int main(int argc, const char** argv) {
     (void)exe;
     {
         size_t w, h;
-        native_get_size(&w, &h);
-        update_size(w, h);
+        stui_term_get_size(&w, &h);
+        stui_setsize(w, h);
     }
+    old_flags = stui_term_get_flags();
+    atexit(cleanup_flags);
 
     editor.path = NULL;
     
@@ -399,25 +319,26 @@ int main(int argc, const char** argv) {
         parse_lines(&editor);
     }
     register_signals();
-    clear();
-    native_flags_t native_flags;
-    native_get_flags(&native_flags);
-    native_flags &= ~NATIVE_FLAG_ECHO;
-    native_flags |= NATIVE_FLAG_INSTANT;
-    native_set_flags(native_flags);
+    stui_clear();
+    stui_term_disable_echo();
+    stui_term_enable_instant();
     for(;;) {
         redraw();
         switch(editor.mode) {
         case MODE_NORMAL: {
-            int c = getch();
+            int c = stui_get_key();
             switch(c) {
             case 'i':
                 editor.mode = MODE_INSERT;
                 break;
             case ':':
                 editor.mode = MODE_CMD;
-                gotopos(0, _height-1);
-                clearlineat(_height-1);
+                break;
+            case STUI_KEY_UP:
+            case STUI_KEY_DOWN:
+            case STUI_KEY_LEFT:
+            case STUI_KEY_RIGHT:
+                handle_editor_movement(c);
                 break;
             default:
                 // putcharat(c, putstrat("Unexpected chr ", 0, h-1), h-1);
@@ -425,9 +346,7 @@ int main(int argc, const char** argv) {
             }
         } break;
         case MODE_INSERT: {
-            // TODO: Actually get cursor positon in window space
-            gotopos(editor.cursor_chr, editor.cursor_line);
-            int c = getch();
+            int c = stui_get_key();
             switch(c) {
             case '`':
                 editor.mode = MODE_NORMAL;
@@ -464,39 +383,11 @@ int main(int argc, const char** argv) {
                 editor.cursor_line++;
                 editor.cursor_chr=0;
                 break;
-            case KEY_UP:
-                if(editor.cursor_line > 0) {
-                    editor.cursor_line--;
-                    if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
-                        editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
-                }
-                break;
-            case KEY_DOWN:
-                if(editor.cursor_line+1 < editor.lines.len) {
-                    editor.cursor_line++;
-                    if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
-                        editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
-                }
-                break;
-            case KEY_RIGHT:
-                if(editor.cursor_chr >= editor.lines.data[editor.cursor_line].size) {
-                    if(editor.cursor_line+1 < editor.lines.len) {
-                        editor.cursor_chr = 0;
-                        editor.cursor_line++;
-                    }
-                } else {
-                    editor.cursor_chr++;
-                }
-                break;
-            case KEY_LEFT: 
-                if(editor.cursor_chr > 0) {
-                    editor.cursor_chr--;
-                } else {
-                    if(editor.cursor_line > 0) {
-                        editor.cursor_line--;
-                        editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
-                    }
-                }
+            case STUI_KEY_UP:
+            case STUI_KEY_DOWN:
+            case STUI_KEY_LEFT:
+            case STUI_KEY_RIGHT:
+                handle_editor_movement(c);
                 break;
             default:
                 editor_add_char(&editor, c, editor.cursor_line, editor.cursor_chr);
@@ -505,25 +396,18 @@ int main(int argc, const char** argv) {
             }
         } break;
         case MODE_CMD: {
-            putcharat(':', 0, _height-1);
-            putstrnat(editor.cmd, editor.cmdlen, 1, _height-1);
-            gotopos(editor.cmdlen+1, _height-1);
-            int c = getch();
+            int c = stui_get_key();
             // TODO: We are temporarily using '`' as the quit key.
             // We don't do escape parsing very well
             if(c == '`') {
                 editor.mode = MODE_NORMAL;
                 editor.cmdlen = 0;
-                clearlineat(_height-1);
                 break;
-            } else if(c == BACKSPACE) {
-                if(editor.cmdlen) editor.cmdlen--;
-                putcharat(' ', editor.cmdlen+1, _height-1);
-            } else if(c == '\n') {
+            } else if(c == BACKSPACE && editor.cmdlen) editor.cmdlen--;
+            else if(c == '\n') {
                 if(editor.cmdlen == 0) {
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
-                    clearlineat(_height-1);
                     break;
                 }
 
@@ -531,26 +415,22 @@ int main(int argc, const char** argv) {
                 assert(editor.cmdlen++ < sizeof(editor.cmd));
                 // NOTE: I don't need to check boundaries. \0 would make it fail anyway
                 if(strcmp(editor.cmd, "q") == 0) {
-                    clear();
-                    #ifdef _MINOS
-                    // NOTE: Temporary solution for now.
-                    // At some point will just be atexit
-                    tty_set_flags(STDIN_FILENO, oldflags);
-                    #endif
+                    stui_clear();
                     return 0;
                 } else if (strcmp(editor.cmd, "w") == 0) {
                     ssize_t res = write_to_file(editor.path, editor.src.data, editor.src.len);
                     if(res < 0) {
+                        // TODO: error messages and popups
                         char buf[128];
                         snprintf(buf, sizeof(buf), "Failed to write to `%s`: %s", editor.path, strerror(-res));
-                        putstrat(buf, 0, _height-1);
+                        // putstrat(buf, 0, _height-1);
                         editor.cmdlen = 0;
                         editor.mode = MODE_NORMAL;
                         break;
                     } else {
                         char buf[128];
                         snprintf(buf, sizeof(buf), "Wrote %zu bytes", editor.src.len);
-                        putstrat(buf, 0, _height-1);
+                        // putstrat(buf, 0, _height-1);
                         editor.cmdlen = 0;
                         editor.mode = MODE_NORMAL;
                         break;
@@ -558,7 +438,7 @@ int main(int argc, const char** argv) {
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "Unknown command `%s`", editor.cmd);
-                    putstrat(buf, 0, _height-1);
+                    // putstrat(buf, 0, _height-1);
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
                     break;
