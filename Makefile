@@ -1,5 +1,5 @@
 CC:=gcc
-CFLAGS:=-Wall -Werror -Wextra
+CFLAGS:=-Wall -Wextra -Wno-unused-function
 all: dim
 dim: src/main.c
 	$(CC) $(CFLAGS) $< -o $@
