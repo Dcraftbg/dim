@@ -86,6 +86,9 @@ static uint8_t stui_input_head = 0, stui_input_tail = 0;
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#ifdef _MINOS
+#include <minos/sysstd.h>
+#endif
 
 char stui_peak_byte(size_t n) {
     if(stui_input_tail + n >= stui_input_head) return 0;
