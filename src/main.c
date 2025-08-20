@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <stdarg.h>
 #include <errno.h>
 
 #define STUI_NO_UNICODE
@@ -172,6 +174,19 @@ const char* shift_args(int *argc, const char ***argv) {
     if((*argc) <= 0) return NULL;
     return ((*argc)--, *((*argv)++));
 }
+static bool has_diagnostic = false;
+#define MAX_DIAG_SIZE 128
+static char diagnostic_buf[128];
+void diagnosticv(const char* fmt, va_list args) {
+    vsnprintf(diagnostic_buf, sizeof(diagnostic_buf), fmt, args);
+    has_diagnostic = true;
+}
+void diagnostic(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    diagnosticv(fmt, args);
+    va_end(args);
+}
 void redraw(void) {
     size_t width, height;
     stui_getsize(&width, &height);
@@ -189,16 +204,20 @@ void redraw(void) {
     }
     size_t x = 0, y = height-2;
     const char* mode = mode_to_str(editor.mode);
-    while(*mode) stui_putchar(x++, y, *mode++);
+    while(*mode && x < width) stui_putchar(x++, y, *mode++);
     stui_putchar(x++, y, ' ');
     const char* path = editor.path;
-    while(*path) stui_putchar(x++, y, *path++);
+    while(*path && x < width) stui_putchar(x++, y, *path++);
     for(size_t i = x; i < width; ++i) {
         stui_putchar(i, y, '-');
     }
     y++;
     x = 0;
     size_t cursor_x = 0, cursor_y = 0;
+    if(has_diagnostic && editor.mode != MODE_CMD) {
+        const char* diag = diagnostic_buf;
+        while(*diag && x < width) stui_putchar(x++, y, *diag++);
+    }
     switch(editor.mode) {
     case MODE_NORMAL:
     case MODE_INSERT:
@@ -206,9 +225,10 @@ void redraw(void) {
         cursor_y = editor.cursor_line;
         break;
     case MODE_CMD:
+        has_diagnostic = false;
         stui_putchar(0, y, ':');
-        for(size_t i = 0; i < editor.cmdlen; ++i) {
-            stui_putchar(1, height-1, editor.cmd[i]);
+        for(size_t i = 0; i < editor.cmdlen && x < width; ++i) {
+            stui_putchar(1 + x++, height-1, editor.cmd[i]);
         }
         cursor_x = editor.cmdlen+1;
         cursor_y = height-1;
@@ -348,7 +368,7 @@ int main(int argc, const char** argv) {
         case MODE_INSERT: {
             int c = stui_get_key();
             switch(c) {
-            case '`':
+            case STUI_KEY_ESC:
                 editor.mode = MODE_NORMAL;
                 break;
             case BACKSPACE:
@@ -397,9 +417,7 @@ int main(int argc, const char** argv) {
         } break;
         case MODE_CMD: {
             int c = stui_get_key();
-            // TODO: We are temporarily using '`' as the quit key.
-            // We don't do escape parsing very well
-            if(c == '`') {
+            if(c == STUI_KEY_ESC) {
                 editor.mode = MODE_NORMAL;
                 editor.cmdlen = 0;
                 break;
@@ -420,25 +438,18 @@ int main(int argc, const char** argv) {
                 } else if (strcmp(editor.cmd, "w") == 0) {
                     ssize_t res = write_to_file(editor.path, editor.src.data, editor.src.len);
                     if(res < 0) {
-                        // TODO: error messages and popups
-                        char buf[128];
-                        snprintf(buf, sizeof(buf), "Failed to write to `%s`: %s", editor.path, strerror(-res));
-                        // putstrat(buf, 0, _height-1);
+                        diagnostic("Failed to write to `%s`: %s", editor.path, strerror(-res));
                         editor.cmdlen = 0;
                         editor.mode = MODE_NORMAL;
                         break;
                     } else {
-                        char buf[128];
-                        snprintf(buf, sizeof(buf), "Wrote %zu bytes", editor.src.len);
-                        // putstrat(buf, 0, _height-1);
+                        diagnostic("Wrote %zu bytes", editor.src.len);
                         editor.cmdlen = 0;
                         editor.mode = MODE_NORMAL;
                         break;
                     }
                 } else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "Unknown command `%s`", editor.cmd);
-                    // putstrat(buf, 0, _height-1);
+                    diagnostic("Unknown command `%s`", editor.cmd);
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
                     break;
