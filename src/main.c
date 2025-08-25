@@ -516,7 +516,8 @@ int main(int argc, const char** argv) {
                 editor.cmd[editor.cmdlen] = '\0';
                 assert(editor.cmdlen++ < sizeof(editor.cmd));
                 bool found = false;
-                if(isdigit(editor.cmd[0])) {
+                // NOTE: we allow negative values for easy "goto end of file" :-1
+                if(isdigit(editor.cmd[0]) || editor.cmd[0] == '-') {
                     found = true;
                     // TODO: use strtol instead and verify input
                     editor.cursor_line = atoi(editor.cmd);
