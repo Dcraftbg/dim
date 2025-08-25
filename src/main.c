@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <ctype.h>
 
 #define STUI_NO_UNICODE
 #define STUI_NO_COLORS
@@ -278,6 +279,13 @@ void register_signals(void) {
     signal(SIGWINCH, _interrupt_handler_resize);
 #endif
 }
+// Must be called after changing the cursor position in any way
+void update_view(void) {
+    if(editor.cursor_line < editor.view_line_start) editor.view_line_start = editor.cursor_line;
+    size_t width, height;
+    stui_getsize(&width, &height);
+    if((editor.cursor_line - editor.view_line_start) >= (height-2)) editor.view_line_start = editor.cursor_line - (height-3);
+}
 void handle_editor_movement(uint32_t key) {
     switch(key) {
     case STUI_KEY_UP:
@@ -315,10 +323,7 @@ void handle_editor_movement(uint32_t key) {
         }
         break;
     }
-    if(editor.cursor_line < editor.view_line_start) editor.view_line_start = editor.cursor_line;
-    size_t width, height;
-    stui_getsize(&width, &height);
-    if((editor.cursor_line - editor.view_line_start) >= (height-2)) editor.view_line_start = editor.cursor_line - (height-3);
+    update_view();
 }
 
 #define cmd_func(name) void cmd_##name(void)
@@ -511,11 +516,20 @@ int main(int argc, const char** argv) {
                 editor.cmd[editor.cmdlen] = '\0';
                 assert(editor.cmdlen++ < sizeof(editor.cmd));
                 bool found = false;
-                for(size_t i = 0; i < sizeof(cmds)/sizeof(*cmds); ++i) {
-                    if(strcmp(editor.cmd, cmds[i].name) == 0) {
-                        cmds[i].func();
-                        found = true;
-                        break;
+                if(isdigit(editor.cmd[0])) {
+                    found = true;
+                    // TODO: use strtol instead and verify input
+                    editor.cursor_line = atoi(editor.cmd);
+                    if(editor.cursor_line > editor.lines.len) editor.cursor_line = editor.lines.len - 1;
+                    editor.cursor_chr = 0;
+                    update_view();
+                } else {
+                    for(size_t i = 0; i < sizeof(cmds)/sizeof(*cmds); ++i) {
+                        if(strcmp(editor.cmd, cmds[i].name) == 0) {
+                            cmds[i].func();
+                            found = true;
+                            break;
+                        }
                     }
                 }
                 editor.cmdlen = 0;
