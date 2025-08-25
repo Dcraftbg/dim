@@ -190,7 +190,8 @@ void diagnostic(const char* fmt, ...) {
 void redraw(void) {
     size_t width, height;
     stui_getsize(&width, &height);
-    size_t visible_lines = editor.lines.len < (height-2) ? editor.lines.len : (height-2);
+    size_t lines_from_start = editor.lines.len - editor.view_line_start;
+    size_t visible_lines = lines_from_start < (height-2) ? lines_from_start : (height-2);
     // Clear the entire window
     for(size_t y = 0; y < height; ++y) {
         for(size_t x = 0; x < width; ++x) {
@@ -198,7 +199,7 @@ void redraw(void) {
         }
     }
     for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
-        Line* line = &editor.lines.data[line_i];
+        Line* line = &editor.lines.data[line_i + editor.view_line_start];
         size_t visible = line->size < width ? line->size : width; 
         for(size_t i = 0; i < visible; ++i) stui_putchar(i, line_i, editor.src.data[line->offset + i]);
     }
@@ -222,7 +223,7 @@ void redraw(void) {
     case MODE_NORMAL:
     case MODE_INSERT:
         cursor_x = editor.cursor_chr;
-        cursor_y = editor.cursor_line;
+        cursor_y = editor.cursor_line - editor.view_line_start;
         break;
     case MODE_CMD:
         has_diagnostic = false;
@@ -269,13 +270,18 @@ void handle_editor_movement(uint32_t key) {
             editor.cursor_line--;
             if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
                 editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
+
+            if(editor.cursor_line < editor.view_line_start) editor.view_line_start = editor.cursor_line;
         }
         break;
     case STUI_KEY_DOWN:
         if(editor.cursor_line+1 < editor.lines.len) {
+            size_t width, height;
+            stui_getsize(&width, &height);
             editor.cursor_line++;
             if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
                 editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
+            if((editor.cursor_line - editor.view_line_start) >= (height-2)) editor.view_line_start++;
         }
         break;
     case STUI_KEY_RIGHT:
