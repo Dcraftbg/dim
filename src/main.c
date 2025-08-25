@@ -285,18 +285,13 @@ void handle_editor_movement(uint32_t key) {
             editor.cursor_line--;
             if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
                 editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
-
-            if(editor.cursor_line < editor.view_line_start) editor.view_line_start = editor.cursor_line;
         }
         break;
     case STUI_KEY_DOWN:
         if(editor.cursor_line+1 < editor.lines.len) {
-            size_t width, height;
-            stui_getsize(&width, &height);
             editor.cursor_line++;
             if(editor.cursor_chr > editor.lines.data[editor.cursor_line].size) 
                 editor.cursor_chr = editor.lines.data[editor.cursor_line].size;
-            if((editor.cursor_line - editor.view_line_start) >= (height-2)) editor.view_line_start++;
         }
         break;
     case STUI_KEY_RIGHT:
@@ -320,6 +315,10 @@ void handle_editor_movement(uint32_t key) {
         }
         break;
     }
+    if(editor.cursor_line < editor.view_line_start) editor.view_line_start = editor.cursor_line;
+    size_t width, height;
+    stui_getsize(&width, &height);
+    if((editor.cursor_line - editor.view_line_start) >= (height-2)) editor.view_line_start = editor.cursor_line - (height-3);
 }
 
 #define cmd_func(name) void cmd_##name(void)
