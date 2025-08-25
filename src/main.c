@@ -13,8 +13,13 @@
 #define STUI_IMPLEMENTATION
 #include "stui.h"
 
-#if defined(__ANDROID__) || defined(_WIN32)
+#if defined(__ANDROID__) || defined(_WIN32) || defined(_MINOS)
 # define DISABLE_ALT_BUFFER 1
+#endif
+
+#if defined(_MINOS)
+# define ENABLE_SWAP 0
+# define NO_INSERT_CURSOR
 #endif
 
 #ifndef ENABLE_SWAP
@@ -366,8 +371,10 @@ cmd_func(write) {
     }
     else {
         diagnostic("Wrote %zu bytes", editor.src.len);
+#if ENABLE_SWAP
         e = remove(tmpbuf);
         if(e < 0 && errno != ENOENT) diagnostic("WARN: Failed to remove swap file %s: %s", tmpbuf, strerror(errno));
+#endif
     }
 }
 cmd_func(quit) {
