@@ -238,7 +238,6 @@ void redraw(void) {
     stui_goto(cursor_x, cursor_y);
 }
 #ifndef _MINOS
-struct termios oldtermios;
 void _interrupt_handler_cleaner(int sig) {
     (void)sig;
     stui_clear();
