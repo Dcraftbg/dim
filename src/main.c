@@ -317,6 +317,44 @@ void handle_editor_movement(uint32_t key) {
         break;
     }
 }
+
+#define cmd_func(name) void cmd_##name(void)
+
+cmd_func(write) {
+    ssize_t res = write_to_file(editor.path, editor.src.data, editor.src.len);
+    if(res < 0) {
+        diagnostic("Failed to write to `%s`: %s", editor.path, strerror(-res));
+        editor.cmdlen = 0;
+        editor.mode = MODE_NORMAL;
+    } else {
+        diagnostic("Wrote %zu bytes", editor.src.len);
+        editor.cmdlen = 0;
+        editor.mode = MODE_NORMAL;
+    }
+}
+cmd_func(quit) {
+    stui_clear();
+    exit(0);
+}
+cmd_func(write_quit) {
+    cmd_write();
+    cmd_quit();
+}
+
+typedef struct {
+    void (*func)(void);
+    const char* name;
+} Command;
+#define cmd(_func, _name, ...) (Command){.func = cmd_##_func, .name=_name, __VA_ARGS__}
+
+Command cmds[] = {
+    cmd(write, "w"),
+    cmd(write, "write"),
+    cmd(quit , "q"),
+    cmd(quit , "quit"),
+    cmd(write_quit, "wq"),
+};
+
 int main(int argc, const char** argv) {
     const char* exe = shift_args(&argc, &argv);
     assert(exe);
@@ -453,24 +491,15 @@ int main(int argc, const char** argv) {
 
                 editor.cmd[editor.cmdlen] = '\0';
                 assert(editor.cmdlen++ < sizeof(editor.cmd));
-                // NOTE: I don't need to check boundaries. \0 would make it fail anyway
-                if(strcmp(editor.cmd, "q") == 0) {
-                    stui_clear();
-                    return 0;
-                } else if (strcmp(editor.cmd, "w") == 0) {
-                    ssize_t res = write_to_file(editor.path, editor.src.data, editor.src.len);
-                    if(res < 0) {
-                        diagnostic("Failed to write to `%s`: %s", editor.path, strerror(-res));
-                        editor.cmdlen = 0;
-                        editor.mode = MODE_NORMAL;
-                        break;
-                    } else {
-                        diagnostic("Wrote %zu bytes", editor.src.len);
-                        editor.cmdlen = 0;
-                        editor.mode = MODE_NORMAL;
+                bool found = false;
+                for(size_t i = 0; i < sizeof(cmds)/sizeof(*cmds); ++i) {
+                    if(strcmp(editor.cmd, cmds[i].name) == 0) {
+                        cmds[i].func();
+                        found = true;
                         break;
                     }
-                } else {
+                }
+                if(!found) {
                     diagnostic("Unknown command `%s`", editor.cmd);
                     editor.cmdlen = 0;
                     editor.mode = MODE_NORMAL;
