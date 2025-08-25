@@ -16,6 +16,10 @@
 # define DISABLE_ALT_BUFFER 1
 #endif
 
+#ifndef ENABLE_SWAP
+# define ENABLE_SWAP 1
+#endif
+
 enum {
     MODE_NORMAL,
     MODE_INSERT,
@@ -321,15 +325,31 @@ void handle_editor_movement(uint32_t key) {
 #define cmd_func(name) void cmd_##name(void)
 
 cmd_func(write) {
+#if ENABLE_SWAP
+    if(strlen(editor.path) >= 4095) {
+        diagnostic("File path is too big!");
+        return;
+    }
+    char tmpbuf[4096];
+    snprintf(tmpbuf, sizeof(tmpbuf), "%s~", editor.path);
+    int e = rename(editor.path, tmpbuf);
+    if(e < 0 && errno != ENOENT) {
+        diagnostic("Failed to created swap file %s -> %s: %s", editor.path, tmpbuf, strerror(errno));
+        return;
+    }
+#endif
     ssize_t res = write_to_file(editor.path, editor.src.data, editor.src.len);
     if(res < 0) {
         diagnostic("Failed to write to `%s`: %s", editor.path, strerror(-res));
-        editor.cmdlen = 0;
-        editor.mode = MODE_NORMAL;
-    } else {
+#if ENABLE_SWAP
+        e = rename(tmpbuf, editor.path);
+        if(e < 0) diagnostic("Failed to restore swap file %s -> %s: %s", tmpbuf, editor.path, strerror(errno));
+#endif
+    }
+    else {
         diagnostic("Wrote %zu bytes", editor.src.len);
-        editor.cmdlen = 0;
-        editor.mode = MODE_NORMAL;
+        e = remove(tmpbuf);
+        if(e < 0 && errno != ENOENT) diagnostic("WARN: Failed to remove swap file %s: %s", tmpbuf, strerror(errno));
     }
 }
 cmd_func(quit) {
@@ -499,10 +519,10 @@ int main(int argc, const char** argv) {
                         break;
                     }
                 }
+                editor.cmdlen = 0;
+                editor.mode = MODE_NORMAL;
                 if(!found) {
                     diagnostic("Unknown command `%s`", editor.cmd);
-                    editor.cmdlen = 0;
-                    editor.mode = MODE_NORMAL;
                     break;
                 }
             } else {
