@@ -12,6 +12,10 @@
 #define STUI_IMPLEMENTATION
 #include "stui.h"
 
+#if defined(__ANDROID__) || defined(_WIN32)
+# define DISABLE_ALT_BUFFER 1
+#endif
+
 enum {
     MODE_NORMAL,
     MODE_INSERT,
@@ -256,6 +260,14 @@ stui_term_flag_t old_flags;
 void cleanup_flags(void) {
     stui_term_set_flags(old_flags);
 }
+#ifndef DISABLE_ALT_BUFFER
+void restore_alt_buffer(void) {
+    // Alternate buffer.
+    // The escape sequence below shouldn't do anything on terminals that don't support it
+    printf("\033[?1049l");
+    fflush(stdout);
+}
+#endif
 void register_signals(void) {
 #ifndef _MINOS
     signal(SIGINT, _interrupt_handler_cleaner);
@@ -316,6 +328,11 @@ int main(int argc, const char** argv) {
     }
     old_flags = stui_term_get_flags();
     atexit(cleanup_flags);
+#ifndef DISABLE_ALT_BUFFER
+    printf("\033[?1049h");
+    fflush(stdout);
+    atexit(restore_alt_buffer);
+#endif
 
     editor.path = NULL;
     
