@@ -245,6 +245,20 @@ void redraw(void) {
     }
     stui_refresh();
     stui_goto(cursor_x, cursor_y);
+
+#ifndef NO_INSERT_CURSOR
+    static bool is_cursor_insert = false;    
+    if(editor.mode == MODE_INSERT) {
+        if(!is_cursor_insert) {
+            printf("\033[6 q");
+            is_cursor_insert = true;
+        }
+    } else if(is_cursor_insert) {
+        printf("\033[1 q");
+        is_cursor_insert = false;
+    }
+    fflush(stdout);
+#endif
 }
 #ifndef _MINOS
 void _interrupt_handler_cleaner(int sig) {
