@@ -9,7 +9,6 @@
 #include <ctype.h>
 
 #define STUI_NO_UNICODE
-#define STUI_NO_COLORS
 #define STUI_IMPLEMENTATION
 #include "stui.h"
 
@@ -69,6 +68,19 @@ static void lines_reserve(Lines* da, size_t extra) {
     da_reserve(da, extra);
 }
 typedef struct {
+    struct {
+        char chr;
+        uint32_t fg, bg;
+    } status_line;
+    struct {
+        uint32_t fg, bg;
+    } mode;
+    struct {
+        uint32_t fg, bg;
+    } filepath;
+    uint32_t fg, bg;
+} Config;
+typedef struct {
     uint32_t mode;
     const char* path;
     char cmd[128];
@@ -81,6 +93,7 @@ typedef struct {
     size_t cursor_line;
     size_t cursor_chr;
     size_t view_line_start;
+    Config config;
 } Editor;
 Editor editor={0};
 void editor_reserve_chars(Editor* editor, size_t extra) {
@@ -209,29 +222,29 @@ void redraw(void) {
     // Clear the entire window
     for(size_t y = 0; y < height; ++y) {
         for(size_t x = 0; x < width; ++x) {
-            stui_putchar(x, y, ' ');
+            stui_putchar_color(x, y, ' ', editor.config.fg, editor.config.bg);
         }
     }
     for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
         Line* line = &editor.lines.data[line_i + editor.view_line_start];
         size_t visible = line->size < width ? line->size : width; 
-        for(size_t i = 0; i < visible; ++i) stui_putchar(i, line_i, editor.src.data[line->offset + i]);
+        for(size_t i = 0; i < visible; ++i) stui_putchar_color(i, line_i, editor.src.data[line->offset + i], editor.config.fg, editor.config.bg);
     }
     size_t x = 0, y = height-2;
     const char* mode = mode_to_str(editor.mode);
-    while(*mode && x < width) stui_putchar(x++, y, *mode++);
-    stui_putchar(x++, y, ' ');
+    while(*mode && x < width) stui_putchar_color(x++, y, *mode++, editor.config.mode.fg, editor.config.mode.bg);
+    stui_putchar_color(x++, y, ' ', editor.config.status_line.fg, editor.config.status_line.bg);
     const char* path = editor.path;
-    while(*path && x < width) stui_putchar(x++, y, *path++);
+    while(*path && x < width) stui_putchar_color(x++, y, *path++, editor.config.filepath.fg, editor.config.filepath.bg);
     for(size_t i = x; i < width; ++i) {
-        stui_putchar(i, y, '-');
+        stui_putchar_color(i, y, editor.config.status_line.chr, editor.config.status_line.fg, editor.config.status_line.bg);
     }
     y++;
     x = 0;
     size_t cursor_x = 0, cursor_y = 0;
     if(has_diagnostic && editor.mode != MODE_CMD) {
         const char* diag = diagnostic_buf;
-        while(*diag && x < width) stui_putchar(x++, y, *diag++);
+        while(*diag && x < width) stui_putchar_color(x++, y, *diag++, editor.config.fg, editor.config.bg);
     }
     switch(editor.mode) {
     case MODE_NORMAL:
@@ -241,9 +254,9 @@ void redraw(void) {
         break;
     case MODE_CMD:
         has_diagnostic = false;
-        stui_putchar(0, y, ':');
+        stui_putchar_color(0, y, ':', editor.config.fg, editor.config.bg);
         for(size_t i = 0; i < editor.cmdlen && x < width; ++i) {
-            stui_putchar(1 + x++, height-1, editor.cmd[i]);
+            stui_putchar_color(1 + x++, height-1, editor.cmd[i], editor.config.fg, editor.config.bg);
         }
         cursor_x = editor.cmdlen+1;
         cursor_y = height-1;
@@ -416,7 +429,24 @@ int main(int argc, const char** argv) {
     fflush(stdout);
     atexit(restore_alt_buffer);
 #endif
-
+    // Default settings
+    editor.config.status_line.chr = '-';
+    // Load config
+    editor.config.status_line.chr = ' ';
+    editor.config.status_line.bg = STUI_RGB(0x111111);
+    editor.config.mode.fg = STUI_RGB(0x212121);
+    editor.config.mode.bg = STUI_RGB(0x0ff082);
+    editor.config.filepath.fg = STUI_RGB(0x71fbc4);
+    editor.config.bg = STUI_RGB(0x212121);
+    editor.config.fg = STUI_RGB(0xd6d6d6);
+    // Unless status line has an override, inherit everything from bg/fg
+    if(!editor.config.status_line.bg) editor.config.status_line.bg = editor.config.bg;
+    if(!editor.config.status_line.fg) editor.config.status_line.fg = editor.config.fg;
+    // Unless it has an override, inherit everything from status line.
+    if(!editor.config.filepath.bg) editor.config.filepath.bg = editor.config.status_line.bg;
+    if(!editor.config.filepath.fg) editor.config.filepath.fg = editor.config.status_line.fg;
+    if(!editor.config.mode.bg) editor.config.filepath.bg = editor.config.status_line.bg;
+    if(!editor.config.mode.fg) editor.config.filepath.fg = editor.config.status_line.fg;
     editor.path = NULL;
     
     const char* arg;
