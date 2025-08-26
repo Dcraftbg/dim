@@ -549,6 +549,7 @@ int main(int argc, const char** argv) {
                 editor.cursor_chr++;
                 break;
             }
+            update_view();
         } break;
         case MODE_CMD: {
             int c = stui_get_key();
