@@ -225,12 +225,27 @@ void redraw(void) {
             stui_putchar_color(x, y, ' ', editor.config.fg, editor.config.bg);
         }
     }
+    size_t x = 0, y = 0;
     for(size_t line_i = 0; line_i < visible_lines; ++line_i) {
         Line* line = &editor.lines.data[line_i + editor.view_line_start];
-        size_t visible = line->size < width ? line->size : width; 
-        for(size_t i = 0; i < visible; ++i) stui_putchar_color(i, line_i, editor.src.data[line->offset + i], editor.config.fg, editor.config.bg);
+        for(size_t i = 0; i < line->size; ++i) {
+            if(x >= width) break;
+            switch(editor.src.data[line->offset + i]) {
+            case '\t':
+                for(size_t j = 0; j < 4; ++j) {
+                    if(x >= width) break;
+                    stui_putchar_color(x++, y, ' ', editor.config.fg, editor.config.bg);
+                }
+                break;
+            default:
+                stui_putchar_color(x++, y, editor.src.data[line->offset + i], editor.config.fg, editor.config.bg);
+                break;
+            }
+        }
+        y++;
+        x = 0;
     }
-    size_t x = 0, y = height-2;
+    x = 0; y = height - 2;
     const char* mode = mode_to_str(editor.mode);
     while(*mode && x < width) stui_putchar_color(x++, y, *mode++, editor.config.mode.fg, editor.config.mode.bg);
     stui_putchar_color(x++, y, ' ', editor.config.status_line.fg, editor.config.status_line.bg);
@@ -249,7 +264,11 @@ void redraw(void) {
     switch(editor.mode) {
     case MODE_NORMAL:
     case MODE_INSERT:
-        cursor_x = editor.cursor_chr;
+        for(size_t i = 0; i < editor.cursor_chr; ++i) {
+            if(editor.src.data[editor.lines.data[editor.cursor_line].offset + i] == '\t') {
+                cursor_x += 4;
+            } else cursor_x++;
+        }
         cursor_y = editor.cursor_line - editor.view_line_start;
         break;
     case MODE_CMD:
